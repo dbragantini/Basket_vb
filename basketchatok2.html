@@ -1,0 +1,225 @@
+
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BasketOK</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="icons/icon-192.png">
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 0; background: #fff; }
+        .tab { display: none; padding: 10px; }
+        .tab.active { display: block; }
+        .tabs button { width: 33%; padding: 10px; font-size: 1em; }
+        .tabs { display: flex; border-bottom: 2px solid #000; }
+        .player-block { display: inline-block; width: 18%; vertical-align: top; padding: 2px; box-sizing: border-box; }
+        .player-stats button { width: 20px; height: 20px; margin: 1px; }
+        .negative { background: #faa; }
+        #timerDisplay { font-size: 2em; margin: 10px; }
+        .running { color: green; }
+        .stopped { color: red; }
+        .summary { margin-top: 10px; font-size: 0.9em; }
+        .export-btn { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="tabs">
+        <button onclick="showTab('formation')">Formazione</button>
+        <button onclick="showTab('stats')">Statistiche</button>
+        <button onclick="showTab('summary')">Riepilogo</button>
+    </div>
+
+    <div id="formation" class="tab active">
+        <h2>Formazione (max 5 in campo)</h2>
+        <div id="playersList"></div>
+        <button onclick="resetData()">Reset Dati</button>
+    </div>
+
+    <div id="stats" class="tab">
+        <h2>Statistiche</h2>
+        <div id="timerDisplay" class="stopped">00:00</div>
+        <button onclick="toggleTimer()">Start / Stop</button>
+        <div id="playersStats"></div>
+    </div>
+
+    <div id="summary" class="tab">
+        <h2>Riepilogo</h2>
+        <div id="summaryContent"></div>
+      
+
+<button type="button" class="export-btn" id="exportXLSX">Esporta XLSX</button>
+
+  
+
+<script src="https://cdn.sheetjs.com/xlsx-latest/package/xlsx.full.min.js"></script>
+<script>
+const players = Array.from({length: 14}, (_, i) => ({ name: `P${i+1}`, inGame: false, stats: {}, secondsPlayed: 0 }));
+let timer = 0, running = false, timerInterval;
+
+function showTab(id) {
+    document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    if (id === 'summary') updateSummary();
+}
+
+function renderFormation() {
+    document.getElementById('playersList').innerHTML = players.map((p, i) => `
+        <label><input type="checkbox" ${p.inGame ? 'checked' : ''} onchange="toggleInGame(${i})">${p.name}</label><br>
+    `).join('');
+}
+
+function toggleInGame(index) {
+    const inGameCount = players.filter(p => p.inGame).length;
+    if (!players[index].inGame && inGameCount >= 5) return alert('Massimo 5 in campo!');
+    players[index].inGame = !players[index].inGame;
+    saveData();
+    renderFormation();
+    renderStats();
+}
+
+function renderStats() {
+    document.getElementById('playersStats').innerHTML = players.filter(p => p.inGame).map(p => `
+        <div class="player-block">
+            <strong>${p.name}</strong><br>
+            ${renderPlayerStats(players.indexOf(p))}
+        </div>
+    `).join('');
+}
+
+function renderPlayerStats(index) {
+    const p = players[index];
+    const keys = ['1s','1m','2s','2m','3s','3m','as','bf','bs','to','ra','rd','fs','ff'];
+    p.stats = p.stats || {};
+    return keys.map(k => `
+        <div>${k.toUpperCase()}: ${p.stats[k] || 0}
+            <button onclick="updateStat(${index}, '${k}', 1)">+</button>
+            <button onclick="updateStat(${index}, '${k}', -1)" class="${['1m','2m','3m','bs','to','ff'].includes(k) ? 'negative' : ''}">-</button>
+        </div>
+    `).join('');
+}
+
+function updateStat(index, key, delta) {
+    const stats = players[index].stats;
+    stats[key] = (stats[key] || 0) + delta;
+    if (stats[key] < 0) stats[key] = 0;
+    saveData();
+    renderStats();
+}
+
+function resetData() {
+    if (!confirm('Confermi il reset?')) return;
+    localStorage.clear();
+    players.forEach(p => { p.inGame = false; p.stats = {}; p.secondsPlayed = 0; });
+    timer = 0;
+    renderFormation();
+    renderStats();
+    updateSummary();
+}
+
+function toggleTimer() {
+    running = !running;
+    const display = document.getElementById('timerDisplay');
+    display.className = running ? 'running' : 'stopped';
+    display.textContent = formatTime(timer);
+    if (running) {
+        timerInterval = setInterval(() => {
+            timer++;
+            players.forEach(p => { if (p.inGame) p.secondsPlayed++; });
+            display.textContent = formatTime(timer);
+        }, 1000);
+    } else clearInterval(timerInterval);
+    saveData();
+}
+
+function formatTime(sec) {
+    const m = String(Math.floor(sec / 60)).padStart(2,'0');
+    const s = String(sec % 60).padStart(2,'0');
+    return `${m}:${s}`;
+}
+
+function updateSummary() {
+    let html = '';
+    let total = {points:0,'1s':0,'1m':0,'2s':0,'2m':0,'3s':0,'3m':0, as:0, bf:0, bs:0, to:0, ra:0, rd:0, fs:0, ff:0};
+    players.forEach(p => {
+        const s = p.stats || {};
+        const pts = (s['1s']||0)*1 + (s['2s']||0)*2 + (s['3s']||0)*3;
+        total.points += pts;
+        ['1s','1m','2s','2m','3s','3m','as','bf','bs','to','ra','rd','fs','ff'].forEach(k => total[k]+=(s[k]||0));
+        const timePlayed = formatTime(p.secondsPlayed);
+        const perc1 = percentage(s['1s'], s['1s'], s['1m']);
+        const perc2 = percentage(s['2s'], s['2s'], s['2m']);
+        const perc3 = percentage(s['3s'], s['3s'], s['3m']);
+        html += `<div><b>${p.name}</b> Punti: ${pts} Minuti: ${timePlayed} 
+            <br> 1: ${perc1}  2: ${perc2}  3: ${perc3}
+            <br> AS:${s['as']||0} BF:${s['bf']||0} BS:${s['bs']||0} TO:${s['to']||0} RA:${s['ra']||0} RD:${s['rd']||0} FS:${s['fs']||0} FF:${s['ff']||0}</div>`;
+    });
+    const perc = k => total[k+'s']+total[k+'m'] > 0 ? (100 * total[k+'s'] / (total[k+'s']+total[k+'m'])).toFixed(1) + '%' : '0%';
+    html += `<h3>Squadra Totale Punti: ${total.points}</h3>`;
+    html += `<div>Tiri 1: ${perc('1')}, Tiri 2: ${perc('2')}, Tiri 3: ${perc('3')}</div>`;
+    html += `<div>Assist: ${total.as} | Stop Fatte: ${total.bf} | Stop Subite: ${total.bs}</div>`;
+    html += `<div>TO: ${total.to} | Rib. Attacco: ${total.ra} | Rib. Difesa: ${total.rd}</div>`;
+    html += `<div>Falli Subiti: ${total.fs} | Falli Fatti: ${total.ff}</div>`;
+    document.getElementById('summaryContent').innerHTML = html;
+}
+
+function percentage(value, made, missed) {
+    const total = (made || 0) + (missed || 0);
+    if (total === 0) return '0%';
+    return (100 * (made || 0) / total).toFixed(1) + '%';
+}
+
+
+function exportToExcel() {
+    const data = players.map(p => {
+        const s = p.stats || {};
+        const pts = (s['1s']||0)*1 + (s['2s']||0)*2 + (s['3s']||0)*3;
+        return {
+            Nome: p.name,
+            Minutaggio: formatTime(p.secondsPlayed),
+            Punti: pts,
+            '1S': s['1s']||0, '1M': s['1m']||0,
+            '2S': s['2s']||0, '2M': s['2m']||0,
+            '3S': s['3s']||0, '3M': s['3m']||0,
+            'Assist': s['as']||0, 'Stop Fatte': s['bf']||0, 'Stop Subite': s['bs']||0,
+            'TO': s['to']||0, 'Rib.A': s['ra']||0, 'Rib.D': s['rd']||0,
+            'Falli Subiti': s['fs']||0, 'Falli Fatti': s['ff']||0
+        };
+    });
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws, 'BasketOK');
+    const blob = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const url = URL.createObjectURL(new Blob([blob], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "BasketOK.xlsx";
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+
+
+
+function saveData() {
+    localStorage.setItem('basketok', JSON.stringify({players, timer, running}));
+}
+
+function loadData() {
+    const saved = JSON.parse(localStorage.getItem('basketok'));
+    if (!saved) return;
+    saved.players.forEach((p, i) => { players[i] = p; });
+    timer = saved.timer;
+    running = saved.running;
+    if (running) toggleTimer();
+}
+
+loadData();
+renderFormation();
+renderStats();
+window.exportToExcel = exportToExcel;
+
+document.getElementById('exportXLSX').addEventListener('click', exportToExcel);
+</script>
+</body>
+</html>
